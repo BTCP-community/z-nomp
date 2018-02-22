@@ -217,8 +217,14 @@ module.exports = function(logger, portalConfig, poolConfigs){
     }
 
     this.getCoins = function(cback){
-        _this.stats.coins = redisClients[0].coins;
-        cback();
+        var coins = [];
+        async.each(_this.stats.pools, function(pool, pcb) {
+            coins.push(pool.name);
+            pcb();
+        }, function(err) {
+            _this.stats.coins = coins;
+            cback(coins);
+        });
     };
     
     this.getPayout = function(address, cback){
@@ -659,42 +665,66 @@ module.exports = function(logger, portalConfig, poolConfigs){
             });
 
             _this.stats = portalStats;
-            
-            // save historical hashrate, not entire stats!
-            var saveStats = JSON.parse(JSON.stringify(portalStats));
-            Object.keys(saveStats.pools).forEach(function(pool){
-                delete saveStats.pools[pool].pending;
-                delete saveStats.pools[pool].confirmed;
-                delete saveStats.pools[pool].currentRoundShares;
-                delete saveStats.pools[pool].currentRoundTimes;
-                delete saveStats.pools[pool].payments;
-                delete saveStats.pools[pool].miners;
-            });
-            _this.statsString = JSON.stringify(saveStats);
-            _this.statHistory.push(saveStats);
-            
-			addStatPoolHistory(portalStats);
-			
-            var retentionTime = (((Date.now() / 1000) - portalConfig.website.stats.historicalRetention) | 0);
+            _this.statHistory.push(_this.stats);
+		
+	    // populates _this.stats.coins
+            _this.getCoins(function(coins) {
+                // filter object to desired stats string only
+                var desiredObjects = [
+                    'time', 'global', 'workers', 'hashrate', 'hashrateString', 'name',
+                    'symbol', 'algorithm', 'validShares', 'validBlocks',
+                    'invalidShares', 'totalPaid', 'networkBlocks',
+                    'networkSols', 'networkSolsString', 'networkDiff',
+                    'networkConnections', 'networkVersion', 'networkProtocolVersion',
+                    'pending', 'confirmed', 'orphaned', 'maxRoundTime', 'shareCount',
+                    'luckDays', 'luckHours', 'minerCount', 'workerCount', 'maxRoundTimeString',
+                    'global', 'pools', 'poolStats', 'blocks', 'algos', 'equihash'
+                ];
+                // add enabled coins to desiredObjects
+                for (var coin in coins)
+                    desiredObjects.push(coins[coin]);
+		    
+                function filterJson(key, value) {
+                   if (!key)
+                        return value;
 
-            for (var i = 0; i < _this.statHistory.length; i++){
-                if (retentionTime < _this.statHistory[i].time){
-                    if (i > 0) {
-                        _this.statHistory = _this.statHistory.slice(i);
-                        _this.statPoolHistory = _this.statPoolHistory.slice(i);
-                    }
-                    break;
+                   if (key == "confirmed" && typeof value === 'object')
+                       return undefined;
+                   if (key == "pending" && typeof value === 'object')
+                       return undefined;
+                   if (key == "workers" && typeof value === 'object')
+                       return undefined;
+                   
+                   if (desiredObjects.indexOf(key) >= 0)
+                       return value;
+
+                    return undefined;
                 }
-            }
+                
+                _this.statsString = JSON.stringify(portalStats, filterJson);
+                
+                redisStats.multi([
+                    ['zadd', 'statHistory', statGatherTime, _this.statsString],
+                    ['zremrangebyscore', 'statHistory', '-inf', '(' + retentionTime]
+                ]).exec(function(err, replies){
+                    if (err)
+                        logger.error(logSystem, 'Historics', 'Error adding stats to historics ' + JSON.stringify(err));
+                });
 
-            redisStats.multi([
-                ['zadd', 'statHistory', statGatherTime, _this.statsString],
-                ['zremrangebyscore', 'statHistory', '-inf', '(' + retentionTime]
-            ]).exec(function(err, replies){
-                if (err)
-                    logger.error(logSystem, 'Historics', 'Error adding stats to historics ' + JSON.stringify(err));
+                addStatPoolHistory(portalStats);			
+                var retentionTime = (((Date.now() / 1000) - portalConfig.website.stats.historicalRetention) | 0);
+                for (var i = 0; i < _this.statHistory.length; i++){
+                    if (retentionTime < _this.statHistory[i].time){
+                        if (i > 0) {
+                            _this.statHistory = _this.statHistory.slice(i);
+                            _this.statPoolHistory = _this.statPoolHistory.slice(i);
+                        }
+                        break;
+                    }
+                }
+                
+                callback();
             });
-            callback();
         });
 
     };
