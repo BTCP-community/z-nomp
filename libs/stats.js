@@ -439,9 +439,9 @@ module.exports = function(logger, portalConfig, poolConfigs){
 								blocks: replies[i + 6].sort(sortBlocks),
                                 confirms: (replies[i + 9] || {})
 							},
-                            /* show last 50 found blocks */
+                            /* show last 150 found blocks */
 							confirmed: {
-								blocks: replies[i + 7].sort(sortBlocks).slice(0,50)
+								blocks: replies[i + 7].sort(sortBlocks).slice(0,150)
 							},
                             payments: [],
 							currentRoundShares: (replies[i + 8] || {}),
